@@ -64,9 +64,6 @@ jobs:
 
           cd clients/apple
 
-          # 关键修改1: 使用 Release 配置
-          # 关键修改2: 使用 archive 代替 build install
-          # 关键修改3: 移除可能导致崩溃的设置
           xcodebuild \
             -project $XCODEPROJ_NAME.xcodeproj \
             -scheme $SCHEME_NAME \
@@ -88,11 +85,9 @@ jobs:
             GCC_OPTIMIZATION_LEVEL=s \
             SWIFT_OPTIMIZATION_LEVEL=-O
 
-          # 标准 IPA 打包流程
           mkdir -p build/Payload
           cp -r build/SFI.xcarchive/Products/Applications/$APPLICATION_NAME.app build/Payload/
 
-          # 关键修改4: 移除可能导致问题的文件
           rm -rf build/Payload/$APPLICATION_NAME.app/_CodeSignature
           rm -f build/Payload/$APPLICATION_NAME.app/embedded.mobileprovision
           
@@ -101,6 +96,15 @@ jobs:
           
           mv $APPLICATION_NAME.ipa ${GITHUB_WORKSPACE}/${APPLICATION_NAME}-${{ env.SING_VERSION }}.ipa
           cd ${GITHUB_WORKSPACE}
+          
+          # 确认文件存在
+          if [ -f "${APPLICATION_NAME}-${{ env.SING_VERSION }}.ipa" ]; then
+            echo "✅ IPA 文件创建成功" >> $GITHUB_STEP_SUMMARY
+            ls -lh ${APPLICATION_NAME}-${{ env.SING_VERSION }}.ipa
+          else
+            echo "❌ IPA 文件创建失败" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
           
           shasum -a 256 ${APPLICATION_NAME}-${{ env.SING_VERSION }}.ipa > checksum.txt
           echo "### 构建信息" >> $GITHUB_STEP_SUMMARY
@@ -112,12 +116,24 @@ jobs:
           echo "### SHA256 校验和" >> $GITHUB_STEP_SUMMARY
           cat checksum.txt >> $GITHUB_STEP_SUMMARY
 
+      - name: Check files before release
+        if: ${{ env.SING_VERSION_MATCH != 'true' }}
+        run: |
+          echo "=== 工作目录内容 ===" 
+          ls -lah ${GITHUB_WORKSPACE}
+          echo ""
+          echo "=== 准备上传的文件 ==="
+          ls -lh sing-box-${{ env.SING_VERSION }}.ipa checksum.txt
+
       - name: Create Release and Upload IPA
         if: ${{ env.SING_VERSION_MATCH != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.SING_VERSION }}
-          name: ${{ env.SING_VERSION }}
+          name: sing-box ${{ env.SING_VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
           body: |
             ## sing-box ${{ env.SING_VERSION }} (Release 优化版)
             
@@ -138,8 +154,23 @@ jobs:
           files: |
             sing-box-${{ env.SING_VERSION }}.ipa
             checksum.txt
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Release Created
+        if: ${{ env.SING_VERSION_MATCH != 'true' }}
+        run: |
+          echo "=== 验证 Release 是否创建成功 ==="
+          sleep 5
+          if gh release view v${{ env.SING_VERSION }} --repo ${{ github.repository }}; then
+            echo "✅ Release 创建成功!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Release 创建失败!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete Old Workflows
         uses: Mattraks/delete-workflow-runs@main
